@@ -1,24 +1,24 @@
 #include <Servo.h>
 
 // PONTE H TRASEIRA
-const int ENA_H1;
-const int ENB_H1;
-const int IN1_H1 = 4;
-const int IN2_H1 = 5;
-const int IN3_H1 = 6;
-const int IN4_H1 = 7;
+// const int ENA_H1;
+// const int ENB_H1;
+const int IN1_H1 = 7;
+const int IN2_H1 = 6;
+const int IN3_H1 = 5;
+const int IN4_H1 = 4;
 
 // PONTE H DIANTEIRA
 const int IN1_H2 = 8;
 const int IN2_H2 = 9;
 const int IN3_H2 = 10;
 const int IN4_H2 = 11;
-const int ENA_H2;
-const int ENB_H2;
+// const int ENA_H2;
+// const int ENB_H2;
 
 // SERVOS
-const int SERVO_ESQ_PIN = 10;
-const int SERVO_DIR_PIN = 3;
+// const int SERVO_ESQ_PIN = 10;
+// const int SERVO_DIR_PIN = 3;
 
 // ULTRASSOM
 const int TRIG_PIN = 12;
@@ -29,8 +29,8 @@ Servo servoEsq;
 Servo servoDir;
 
 void setup() {
-  pinMode(ENA_H1, OUTPUT);
-  pinMode(ENB_H1, OUTPUT);
+  // pinMode(ENA_H1, OUTPUT);
+  // pinMode(ENB_H1, OUTPUT);
 
   pinMode(IN1_H1, OUTPUT);
   pinMode(IN2_H1, OUTPUT);
@@ -38,16 +38,16 @@ void setup() {
   pinMode(IN4_H1, OUTPUT);
 
 
-  pinMode(ENA_H2, OUTPUT);
-  pinMode(ENB_H2, OUTPUT);
+  // pinMode(ENA_H2, OUTPUT);
+  // pinMode(ENB_H2, OUTPUT);
 
   pinMode(IN1_H2, OUTPUT);
   pinMode(IN2_H2, OUTPUT);
   pinMode(IN3_H2, OUTPUT);
   pinMode(IN4_H2, OUTPUT);
 
-  servoEsq.attach(SERVO_ESQ_PIN);
-  servoDir.attach(SERVO_DIR_PIN);
+  // servoEsq.attach(SERVO_ESQ_PIN);
+  // servoDir.attach(SERVO_DIR_PIN);
 
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
@@ -57,15 +57,15 @@ void setup() {
 
 // VELOCIDADE (0 a 255)
 // MOTOR: TRASEIRO (T) ou DIANTEIRO (D)
-void setVelocidadeMotores(char motor, int velocidadeEsq, int velocidadeDir) {
-  if (motor == 'T') {
-    analogWrite(ENA_H1, velocidadeEsq);
-    analogWrite(ENB_H1, velocidadeDir);
-  } else if (motor == 'D') {
-    analogWrite(ENA_H2, velocidadeEsq);
-    analogWrite(ENB_H2, velocidadeDir);
-  }
-}
+// void setVelocidadeMotores(char motor, int velocidadeEsq, int velocidadeDir) {
+//   if (motor == 'T') {
+//     analogWrite(ENA_H1, velocidadeEsq);
+//     analogWrite(ENB_H1, velocidadeDir);
+//   } else if (motor == 'D') {
+//     analogWrite(ENA_H2, velocidadeEsq);
+//     analogWrite(ENB_H2, velocidadeDir);
+//   }
+// }
 
 void moverFrente() {
   digitalWrite(IN1_H1, HIGH);
@@ -166,11 +166,14 @@ void loop() {
   // if (distanceUltrassom < 15) {
   //    giroDireita(90);
   //  }
-  // moverFrente();
-  // moverTras();
-  // moverFrente();
+  moverFrente();
+  pararMotor();
 
-  // pararMotor();
+  moverTras();
+  pararMotor();
+
+  moverFrente();
+  pararMotor();
   
   // giroDireita(45);
   // giroEsquerda(60);
