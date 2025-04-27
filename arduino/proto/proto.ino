@@ -21,9 +21,8 @@ const int IN4_H2 = 11;
 // const int SERVO_DIR_PIN = 3;
 
 // ULTRASSOM
-const int TRIG_PIN = 12;
-const int ECHO_PIN = 13;
-
+const int trigPin = 12;
+const int echoPin = 13;
 
 Servo servoEsq;
 Servo servoDir;
@@ -49,69 +48,62 @@ void setup() {
   // servoEsq.attach(SERVO_ESQ_PIN);
   // servoDir.attach(SERVO_DIR_PIN);
 
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
 
   Serial.begin(9600);
 }
 
 // VELOCIDADE (0 a 255)
-// MOTOR: TRASEIRO (T) ou DIANTEIRO (D)
-// void setVelocidadeMotores(char motor, int velocidadeEsq, int velocidadeDir) {
-//   if (motor == 'T') {
-//     analogWrite(ENA_H1, velocidadeEsq);
-//     analogWrite(ENB_H1, velocidadeDir);
-//   } else if (motor == 'D') {
-//     analogWrite(ENA_H2, velocidadeEsq);
-//     analogWrite(ENB_H2, velocidadeDir);
-//   }
-// }
+void setVelocidadeMotores(int velocidadeEsq, int velocidadeDir) {
+  analogWrite(ENA_H1, velocidadeEsq); // Traseira esquerda
+  analogWrite(ENA_H2, velocidadeEsq); // Dianteira esquerda
 
-void moverFrente() {
-  digitalWrite(IN1_H1, HIGH);
-  digitalWrite(IN1_H2, HIGH);
-
-  digitalWrite(IN2_H1, LOW);
-  digitalWrite(IN2_H2, LOW);
-
-  digitalWrite(IN3_H1, HIGH);
-  digitalWrite(IN3_H2, HIGH);
-
-  digitalWrite(IN4_H1, LOW);
-  digitalWrite(IN4_H2, LOW);
-
-  delay(3000);
+  analogWrite(ENB_H1, velocidadeDir); // Traseira direita
+  analogWrite(ENB_H2, velocidadeDir); // Dianteira direita
 }
 
-void moverTras() {
-  digitalWrite(IN1_H1, LOW);
-  digitalWrite(IN1_H2, LOW);
+void mover(int velEsq, int velDir) {
+  // Direção do lado esquerdo
+  bool frenteEsq = velEsq >= 0;
+  digitalWrite(IN1_H1, frenteEsq);
+  digitalWrite(IN2_H1, !frenteEsq);
+  digitalWrite(IN1_H2, frenteEsq);
+  digitalWrite(IN2_H2, !frenteEsq);
 
-  digitalWrite(IN2_H1, HIGH);
-  digitalWrite(IN2_H2, HIGH);
+  // Direção do lado direito
+  bool frenteDir = velDir >= 0;
+  digitalWrite(IN3_H1, frenteDir);
+  digitalWrite(IN4_H1, !frenteDir);
+  digitalWrite(IN3_H2, frenteDir);
+  digitalWrite(IN4_H2, !frenteDir);
 
-  digitalWrite(IN3_H1, LOW);
-  digitalWrite(IN3_H2, LOW);
+  // Aplica a velocidade
+  int pwmEsq = abs(velEsq);
+  int pwmDir = abs(velDir);
 
-  digitalWrite(IN4_H1, HIGH);
-  digitalWrite(IN4_H2, HIGH);
+  setVelocidadeMotores(pwmEsq, pwmDir);
+}
 
-  delay(3000);
+void moverFrenteDireito() {
+  //mover somente rodas do lado direito com alguma velocidade
+}
+
+void moverFrenteEsquerdo() {
+  //mover somente rodas do lado esquerdo com alguma velocidade
 }
 
 void pararMotor() {
-  digitalWrite(IN1_H1, LOW);
-  digitalWrite(IN1_H2, LOW);
+  mover(0, 0);
 
-  digitalWrite(IN2_H1, LOW);
-  digitalWrite(IN2_H2, LOW);
-
-  digitalWrite(IN3_H1, LOW);
-  digitalWrite(IN3_H2, LOW);
-
-  digitalWrite(IN4_H1, LOW);
-  digitalWrite(IN4_H2, LOW);
   delay(2000);
+}
+
+void alinharServo() {
+  servoEsq.write(90);
+  servoDir.write(90);
+  Serial.println("Alinhando servos");
+  delay(3000);
 }
 
 // 0 -> extremo esquerdo
@@ -122,7 +114,9 @@ void giroDireita(int angle) {
   angle = 90 + angle;
   servoEsq.write(angle);
   servoDir.write(angle);
-  delay(3000);
+  delay(2000);
+
+  pararMotor();
 }
 
 void giroEsquerda(int angle) {
@@ -131,26 +125,95 @@ void giroEsquerda(int angle) {
   angle = 90 - angle;
   servoEsq.write(angle);
   servoDir.write(angle);
-  delay(3000);
+  delay(2000);
 
+  pararMotor();
 }
 
-void alinharServo() {
-  servoEsq.write(90);
-  servoDir.write(90);
-  Serial.println("Alinhando servos");
-  delay(3000);
+void curvaDireita(int angle=45, int velEsq=200, int velDir=150) {
+  mover(-100, -100);
+
+  giroDireita(angle);
+
+  //velocidade esquerdo maior que direito
+  mover(velEsq, velDir);
+
+  alinharServo();
+  pararMotor();
+}
+
+void curvaEsquerda(int angle=45, int velEsq=150, int velDir=200) {
+  mover(-100, -100);
+
+  giroEsquerda(angle);
+
+  //velocidade direito maior que esquerdo
+  mover(velEsq, velDir);
+
+  alinharServo();
+  pararMotor();
+}
+
+void desvioObstaculo() {
+  pararMotor();
+  
+  double distanciaFrente = getDistance();
+
+  if (distanciaFrente < 20) {
+    Serial.println("Obstáculo detectado à frente!");
+
+    alinharServo();
+
+    double distanciaEsquerda = 0;
+    double distanciaDireita = 0;
+
+    // Curva leve para a esquerda
+    Serial.println("Curvando levemente para a esquerda para verificar...");
+    curvaEsquerda(velEsq=50, velDir=100);
+    delay(400);
+    distanciaEsquerda = getDistance();
+    delay(300);
+
+    mover(-100, -100);
+
+    // Curva leve para a direita
+    Serial.println("Curvando levemente para a direita para verificar...");
+    curvaEsquerda(velEsq=100, velDir=50);
+    delay(400);
+    distanciaDireita = getDistance();
+    delay(300);
+
+    // Voltar para posição inicial
+    Serial.println("Voltando para a posição inicial...");
+    mover(-100, -100);
+    delay(400);
+    pararMotor();
+    alinharServo();
+
+    Serial.println("Distância esquerda: " + String(distanciaEsquerda));
+    Serial.println("Distância direita: " + String(distanciaDireita));
+
+    if (distanciaEsquerda > distanciaDireita) {
+      curvaEsquerda(45);
+    } else {
+      curvaDireita(45);
+    }
+
+    mover(200, 200);
+    delay(1000);
+    pararMotor();
+  }
 }
 
 double getDistance() {
-  digitalWrite(TRIG_PIN, LOW);
+  digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   
-  digitalWrite(TRIG_PIN, HIGH);
+  digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+  digitalWrite(trigPin, LOW);
 
-  long duration = pulseIn(ECHO_PIN, HIGH);
+  long duration = pulseIn(echoPin, HIGH);
   long distance = duration * 0.0343 / 2;
   delay(500);
 
@@ -160,24 +223,14 @@ double getDistance() {
 }
 
 void loop() {
-  // double distanceUltrassom = getDistance();
 
-  // Obstáculo detectado
-  // if (distanceUltrassom < 15) {
-  //    giroDireita(90);
-  //  }
-  moverFrente();
+  mover(200, 200);
   pararMotor();
 
-  moverTras();
+  mover(-200, -200);
   pararMotor();
 
-  moverFrente();
+  mover(200, 200);
   pararMotor();
   
-  // giroDireita(45);
-  // giroEsquerda(60);
-  // delay(10);
-  // alinharServo();
-  // giroEsquerda();
 }
