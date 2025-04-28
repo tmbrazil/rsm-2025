@@ -3,22 +3,24 @@
 // PONTE H TRASEIRA
 const int ENA_H1 = 2;
 const int ENB_H1 = 3;
+
 const int IN1_H1 = 7;
 const int IN2_H1 = 6;
 const int IN3_H1 = 5;
 const int IN4_H1 = 4;
 
 // PONTE H DIANTEIRA
+const int ENA_H2 = 3;
+const int ENB_H2 = 2;
+
 const int IN1_H2 = 8;
 const int IN2_H2 = 9;
 const int IN3_H2 = 10;
 const int IN4_H2 = 11;
-const int ENA_H2 = 3;
-const int ENB_H2 = 2;
 
 // SERVOS
-const int SERVO_ESQ_PIN = 12;
-const int SERVO_DIR_PIN = 13;
+const int servoEsqPin = 12;
+const int servoDirPin = 13;
 
 // ULTRASSOM
 const int trigPin = 44;
@@ -36,7 +38,6 @@ void setup() {
   pinMode(IN3_H1, OUTPUT);
   pinMode(IN4_H1, OUTPUT);
 
-
   pinMode(ENA_H2, OUTPUT);
   pinMode(ENB_H2, OUTPUT);
 
@@ -45,8 +46,8 @@ void setup() {
   pinMode(IN3_H2, OUTPUT);
   pinMode(IN4_H2, OUTPUT);
 
-  servoEsq.attach(SERVO_ESQ_PIN);
-  servoDir.attach(SERVO_DIR_PIN);
+  servoEsq.attach(servoEsqPin);
+  servoDir.attach(servoDirPin);
 
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
@@ -103,8 +104,7 @@ void alinharServo() {
 void giroDireita(int angle) {
   Serial.println("Girando: " + String(angle) + "(direita)"); 
 
-  angle = 90 + angle;
-  servoEsq.write(angle);
+  servoEsq.write(90 + angle);
   servoDir.write(angle);
   delay(2000);
 
@@ -114,8 +114,7 @@ void giroDireita(int angle) {
 void giroEsquerda(int angle) {
   Serial.println("Girando: " + String(angle) + "(esquerda)");
 
-  angle = 90 - angle;
-  servoEsq.write(angle);
+  servoEsq.write(90 - angle);
   servoDir.write(angle);
   delay(2000);
 
@@ -161,7 +160,7 @@ void desvioObstaculo() {
 
     // Curva leve para a esquerda
     Serial.println("Curvando levemente para a esquerda para verificar...");
-    curvaEsquerda(velEsq=50, velDir=100);
+    curvaEsquerda();
     delay(400);
     distanciaEsquerda = getDistance();
     delay(300);
@@ -170,7 +169,7 @@ void desvioObstaculo() {
 
     // Curva leve para a direita
     Serial.println("Curvando levemente para a direita para verificar...");
-    curvaEsquerda(velEsq=100, velDir=50);
+    curvaEsquerda();
     delay(400);
     distanciaDireita = getDistance();
     delay(300);
@@ -216,13 +215,13 @@ double getDistance() {
 
 void loop() {
 
-  mover(200, 200);
+  mover(100, 150);
   pararMotor();
 
-  mover(-200, -200);
+  mover(-100, -100);
   pararMotor();
 
-  mover(200, 200);
+  mover(100, 150);
   pararMotor();
   
 }
