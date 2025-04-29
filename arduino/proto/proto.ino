@@ -1,3 +1,4 @@
+#include <IRremote.h>
 #include <Servo.h>
 
 // PONTE H TRASEIRA
@@ -23,23 +24,27 @@ const int servoEsqPin = 12;
 const int servoDirPin = 13;
 
 // ULTRASSOM
-const int trigPin = 44;
-const int echoPin = 46;
+const int trigPin = 46;
+const int echoPin = 44;
+
+//IR
+const int infraRedPin = A0;
+bool turnedOn = false;
 
 Servo servoEsq;
 Servo servoDir;
 
 void setup() {
-  pinMode(ENA_H1, OUTPUT);
-  pinMode(ENB_H1, OUTPUT);
+  pinMode(2, OUTPUT);
+  pinMode(3, OUTPUT);
 
   pinMode(IN1_H1, OUTPUT);
   pinMode(IN2_H1, OUTPUT);
   pinMode(IN3_H1, OUTPUT);
   pinMode(IN4_H1, OUTPUT);
 
-  pinMode(ENA_H2, OUTPUT);
-  pinMode(ENB_H2, OUTPUT);
+  // pinMode(ENA_H2, OUTPUT);
+  // pinMode(ENB_H2, OUTPUT);
 
   pinMode(IN1_H2, OUTPUT);
   pinMode(IN2_H2, OUTPUT);
@@ -52,16 +57,23 @@ void setup() {
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
+  IrReceiver.begin(infraRedPin, ENABLE_LED_FEEDBACK); // Inicializa receptor IR no pino 7
+
   Serial.begin(9600);
+  
+  Serial.println("Aguardando sinais IR...");
 }
 
 // VELOCIDADE (0 a 255)
 void setVelocidadeMotores(int velocidadeEsq, int velocidadeDir) {
-  analogWrite(ENA_H1, velocidadeEsq); // Traseira esquerda
-  analogWrite(ENB_H2, velocidadeEsq); // Dianteira esquerda
+  // analogWrite(ENA_H1, velocidadeEsq); // Traseira esquerda
+  // analogWrite(ENB_H2, velocidadeEsq); // Dianteira esquerda
 
-  analogWrite(ENA_H2, velocidadeDir); // Traseira direita
-  analogWrite(ENB_H1, velocidadeDir); // Dianteira direita
+  analogWrite(2, velocidadeDir); // Traseira direita
+  analogWrite(3, velocidadeEsq); // Dianteira direita
+
+  // analogWrite(3, velocidadeEsq); // Todos do lado esquerdo: traseira esquerda (ENB_H1) + dianteira esquerda (ENA_H2)
+  // analogWrite(2, velocidadeDir); // Todos do lado direito: traseira direita (ENA_H1) + dianteira direita (ENB_H2)
 }
 
 void mover(int velEsq, int velDir) {
@@ -84,6 +96,8 @@ void mover(int velEsq, int velDir) {
   int pwmDir = abs(velDir);
 
   setVelocidadeMotores(pwmEsq, pwmDir);
+
+  delay(100);
 }
 
 void pararMotor() {
@@ -213,15 +227,51 @@ double getDistance() {
   return distance;
 }
 
+unsigned long curvaStartTime = 0;
+bool fazendoCurva = false;
+
 void loop() {
+  if (IrReceiver.decode()) {
+    unsigned long codigo = IrReceiver.decodedIRData.decodedRawData;
 
-  mover(100, 150);
-  pararMotor();
+    Serial.print("Código recebido (HEX): 0x");
+    Serial.println(codigo, HEX);
 
-  mover(-100, -100);
-  pararMotor();
+    if (codigo == 0xE916FF00) { // Botão ON
+      turnedOn = true;
+      fazendoCurva = false; // Se ligou de novo, reseta curva
+      mover(100, 100); // Começa a andar
+    } else if (codigo == 0xF20DFF00) { // Botão OFF
+      turnedOn = false;
+      fazendoCurva = false;
+      pararMotor(); // Para o motor
+    }
 
-  mover(100, 150);
-  pararMotor();
-  
+    IrReceiver.resume(); // Prepara para o próximo sinal
+  }
+
+  if (turnedOn) {
+    if (!fazendoCurva) {
+      double distance = getDistance();
+      if (distance < 40) {
+        Serial.println("Obstáculo detectado! Fazendo curva...");
+        mover(-100, -100);
+        curvaStartTime = millis();
+        fazendoCurva = true;
+      } else {
+        mover(100, 100);
+        Serial.println("Andando normalmente");
+      }
+    } else {
+      // Está fazendo curva: espera 3 segundos, depois corrige a direção
+      if (millis() - curvaStartTime >= 3000) {
+        mover(100, 150); // Curva após ré
+        curvaStartTime = millis(); // Atualiza o tempo para a nova curva
+        fazendoCurva = false; // Curva concluída
+        Serial.println("Curva encerrada, andando novamente");
+      }
+    }
+  }
+
+  delay(50); // Pequeno delay para estabilidade
 }
