@@ -1,277 +1,249 @@
 #include <IRremote.h>
 #include <Servo.h>
 
-// PONTE H TRASEIRA
-const int ENA_H1 = 2;
-const int ENB_H1 = 3;
+// ========= CONFIGURAÇÃO DOS PINOS =========
+// Motores
+const int ENA_H1 = 2;   // PWM motor direito traseiro
+const int ENB_H1 = 3;   // PWM motor esquerdo traseiro
 
-const int IN1_H1 = 7;
+const int IN1_H1 = 7;   // Controle motor esquerdo traseiro
 const int IN2_H1 = 6;
-const int IN3_H1 = 5;
+const int IN3_H1 = 5;   // Controle motor direito traseiro
 const int IN4_H1 = 4;
 
-// PONTE H DIANTEIRA
-const int ENA_H2 = 3;
-const int ENB_H2 = 2;
-
-const int IN1_H2 = 8;
+const int IN1_H2 = 8;   // Controle motor esquerdo dianteiro
 const int IN2_H2 = 9;
-const int IN3_H2 = 10;
+const int IN3_H2 = 10;  // Controle motor direito dianteiro
 const int IN4_H2 = 11;
 
-// SERVOS
+// Servos
 const int servoEsqPin = 12;
-const int servoDirPin = 13;
-
-// ULTRASSOM
-const int trigPin = 46;
-const int echoPin = 44;
-
-//IR
-const int infraRedPin = A0;
-bool turnedOn = false;
-
+const int servoDirPin = 45;
 Servo servoEsq;
 Servo servoDir;
 
+// Ultrassom
+const int trigPin = 46;
+const int echoPin = 44;
+
+// Controle IR
+const int infraRedPin = 19;
+bool turnedOn = false;
+
+// ========= PARÂMETROS DE CONTROLE =========
+const int offsetMax = 30;     // Máximo desvio angular dos servos
+
+// Navegação
+const unsigned long correctionInterval = 500;
+unsigned long lastCorrectionTime = 0;
+int lastCorrection = 0;       // -1:esq, 0:centro, 1:dir
+
+// ========= FUNÇÕES BÁSICAS =========
 void setup() {
-  pinMode(2, OUTPUT);
-  pinMode(3, OUTPUT);
+  // Configura pinos dos motores
+  pinMode(ENA_H1, OUTPUT);
+  pinMode(ENB_H1, OUTPUT);
+  for (int i = 4; i <= 11; i++) pinMode(i, OUTPUT);
 
-  pinMode(IN1_H1, OUTPUT);
-  pinMode(IN2_H1, OUTPUT);
-  pinMode(IN3_H1, OUTPUT);
-  pinMode(IN4_H1, OUTPUT);
-
-  // pinMode(ENA_H2, OUTPUT);
-  // pinMode(ENB_H2, OUTPUT);
-
-  pinMode(IN1_H2, OUTPUT);
-  pinMode(IN2_H2, OUTPUT);
-  pinMode(IN3_H2, OUTPUT);
-  pinMode(IN4_H2, OUTPUT);
-
-  servoEsq.attach(servoEsqPin);
-  servoDir.attach(servoDirPin);
-
+  // Inicializa sensores e atuadores
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
-
-  IrReceiver.begin(infraRedPin, ENABLE_LED_FEEDBACK); // Inicializa receptor IR no pino 7
-
-  Serial.begin(9600);
+  IrReceiver.begin(infraRedPin);
+  servoEsq.attach(servoEsqPin);
+  servoDir.attach(servoDirPin);
   
-  Serial.println("Aguardando sinais IR...");
+  Serial.begin(9600);
+  alinharServo();
+  Serial.println("Sistema iniciado");
 }
 
-// VELOCIDADE (0 a 255)
-void setVelocidadeMotores(int velocidadeEsq, int velocidadeDir) {
-  // analogWrite(ENA_H1, velocidadeEsq); // Traseira esquerda
-  // analogWrite(ENB_H2, velocidadeEsq); // Dianteira esquerda
-
-  analogWrite(2, velocidadeDir); // Traseira direita
-  analogWrite(3, velocidadeEsq); // Dianteira direita
-
-  // analogWrite(3, velocidadeEsq); // Todos do lado esquerdo: traseira esquerda (ENB_H1) + dianteira esquerda (ENA_H2)
-  // analogWrite(2, velocidadeDir); // Todos do lado direito: traseira direita (ENA_H1) + dianteira direita (ENB_H2)
+void setVelocidadeMotores(int velEsq, int velDir) {
+  analogWrite(ENB_H1, velEsq);  // Motor esquerdo
+  analogWrite(ENA_H1, velDir);  // Motor direito
 }
 
 void mover(int velEsq, int velDir) {
-  // Direção do lado esquerdo
-  bool frenteEsq = velEsq >= 0;
-  digitalWrite(IN1_H1, frenteEsq);
-  digitalWrite(IN2_H1, !frenteEsq);
-  digitalWrite(IN1_H2, frenteEsq);
-  digitalWrite(IN2_H2, !frenteEsq);
+  // Controle de direção
+  digitalWrite(IN1_H1, velEsq > 0);
+  digitalWrite(IN2_H1, velEsq <= 0);
+  digitalWrite(IN1_H2, velEsq > 0);
+  digitalWrite(IN2_H2, velEsq <= 0);
+  
+  digitalWrite(IN3_H1, velDir > 0);
+  digitalWrite(IN4_H1, velDir <= 0);
+  digitalWrite(IN3_H2, velDir > 0);
+  digitalWrite(IN4_H2, velDir <= 0);
 
-  // Direção do lado direito
-  bool frenteDir = velDir >= 0;
-  digitalWrite(IN3_H1, frenteDir);
-  digitalWrite(IN4_H1, !frenteDir);
-  digitalWrite(IN3_H2, frenteDir);
-  digitalWrite(IN4_H2, !frenteDir);
-
-  // Aplica a velocidade
-  int pwmEsq = abs(velEsq);
-  int pwmDir = abs(velDir);
-
-  setVelocidadeMotores(pwmEsq, pwmDir);
-
-  delay(100);
+  setVelocidadeMotores(abs(velEsq), abs(velDir));
 }
 
 void pararMotor() {
   mover(0, 0);
-
-  delay(2000);
+  Serial.println("Motores parados");
 }
 
+// ========= CONTROLE DOS SERVOS =========
 void alinharServo() {
   servoEsq.write(90);
   servoDir.write(90);
-  Serial.println("Alinhando servos");
-  delay(3000);
+  lastCorrection = 0;
+  delay(300);
 }
 
-// 0 -> extremo esquerdo
-// 180 -> extremo direito
 void giroDireita(int angle) {
-  Serial.println("Girando: " + String(angle) + "(direita)"); 
-
+  angle = constrain(angle, 0, offsetMax);
   servoEsq.write(90 + angle);
-  servoDir.write(angle);
-  delay(2000);
-
-  pararMotor();
+  servoDir.write(90 + angle);
+  Serial.print("Giro DIREITA: ");
+  Serial.print(angle);
+  Serial.println(" graus");
+  delay(300);
 }
 
 void giroEsquerda(int angle) {
-  Serial.println("Girando: " + String(angle) + "(esquerda)");
-
+  angle = constrain(angle, 0, offsetMax);
   servoEsq.write(90 - angle);
-  servoDir.write(angle);
-  delay(2000);
-
-  pararMotor();
+  servoDir.write(90 - angle);
+  Serial.print("Giro ESQUERDA: ");
+  Serial.print(angle);
+  Serial.println(" graus");
+  delay(300);
 }
 
-void curvaDireita(int angle=45, int velEsq=200, int velDir=150) {
-  mover(-100, -100);
-
-  giroDireita(angle);
-
-  //velocidade esquerdo maior que direito
-  mover(velEsq, velDir);
-
-  alinharServo();
-  pararMotor();
-}
-
-void curvaEsquerda(int angle=45, int velEsq=150, int velDir=200) {
-  mover(-100, -100);
-
-  giroEsquerda(angle);
-
-  //velocidade direito maior que esquerdo
-  mover(velEsq, velDir);
-
-  alinharServo();
-  pararMotor();
-}
-
-void desvioObstaculo() {
-  pararMotor();
-  
-  double distanciaFrente = getDistance();
-
-  if (distanciaFrente < 20) {
-    Serial.println("Obstáculo detectado à frente!");
-
-    alinharServo();
-
-    double distanciaEsquerda = 0;
-    double distanciaDireita = 0;
-
-    // Curva leve para a esquerda
-    Serial.println("Curvando levemente para a esquerda para verificar...");
-    curvaEsquerda();
-    delay(400);
-    distanciaEsquerda = getDistance();
-    delay(300);
-
-    mover(-100, -100);
-
-    // Curva leve para a direita
-    Serial.println("Curvando levemente para a direita para verificar...");
-    curvaEsquerda();
-    delay(400);
-    distanciaDireita = getDistance();
-    delay(300);
-
-    // Voltar para posição inicial
-    Serial.println("Voltando para a posição inicial...");
-    mover(-100, -100);
-    delay(400);
-    pararMotor();
-    alinharServo();
-
-    Serial.println("Distância esquerda: " + String(distanciaEsquerda));
-    Serial.println("Distância direita: " + String(distanciaDireita));
-
-    if (distanciaEsquerda > distanciaDireita) {
-      curvaEsquerda(45);
-    } else {
-      curvaDireita(45);
-    }
-
-    mover(200, 200);
-    delay(1000);
-    pararMotor();
-  }
-}
-
-double getDistance() {
+// ========= NAVEGAÇÃO =========
+double medirDistancia() {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
-  
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
   long duration = pulseIn(echoPin, HIGH);
-  long distance = duration * 0.0343 / 2;
-  delay(500);
-
-  Serial.println("Distancia ultrassom: " + String(distance));
-
+  double distance = duration * 0.0343 / 2;
+  
+  Serial.print("Distância: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+  
   return distance;
 }
 
-unsigned long curvaStartTime = 0;
-bool fazendoCurva = false;
-
-void loop() {
-  if (IrReceiver.decode()) {
-    unsigned long codigo = IrReceiver.decodedIRData.decodedRawData;
-
-    Serial.print("Código recebido (HEX): 0x");
-    Serial.println(codigo, HEX);
-
-    if (codigo == 0xE916FF00) { // Botão ON
-      turnedOn = true;
-      fazendoCurva = false; // Se ligou de novo, reseta curva
-      mover(100, 100); // Começa a andar
-    } else if (codigo == 0xF20DFF00) { // Botão OFF
-      turnedOn = false;
-      fazendoCurva = false;
-      pararMotor(); // Para o motor
-    }
-
-    IrReceiver.resume(); // Prepara para o próximo sinal
+void decidirCurva() {
+  pararMotor();
+  delay(500);
+  
+  // Verifica três direções
+  alinharServo();
+  double frente = medirDistancia();
+  
+  giroEsquerda(30);  // Olha para esquerda
+  double esquerda = medirDistancia();
+  
+  giroDireita(60);   // Olha para direita (30° a partir do centro)
+  double direita = medirDistancia();
+  
+  alinharServo();
+  
+  // Toma decisão
+  if(esquerda > direita && esquerda > 40) {
+    Serial.println("Decisão: Virar ESQUERDA");
+    curvaEsquerda();
+  } 
+  else if(direita > 40) {
+    Serial.println("Decisão: Virar DIREITA");
+    curvaDireita();
+  } 
+  else {
+    Serial.println("Decisão: Dar ré e tentar novamente");
+    mover(-100, -100);
+    delay(1000);
+    decidirCurva();
   }
+}
 
-  if (turnedOn) {
-    if (!fazendoCurva) {
-      double distance = getDistance();
-      if (distance < 40) {
-        Serial.println("Obstáculo detectado! Fazendo curva...");
-        mover(-100, -100);
-        curvaStartTime = millis();
-        fazendoCurva = true;
-      } else {
-        mover(100, 100);
-        Serial.println("Andando normalmente");
-      }
+void curvaEsquerda() {
+  Serial.println("Executando curva para ESQUERDA");
+  for(int i = 0; i <= offsetMax; i += 5) {
+    giroEsquerda(i);
+    mover(100, 70);  // Motor direito mais lento
+    delay(100);
+  }
+  delay(800);
+  alinharServo();
+}
+
+void curvaDireita() {
+  Serial.println("Executando curva para DIREITA");
+  for(int i = 0; i <= offsetMax; i += 5) {
+    giroDireita(i);
+    mover(70, 100);  // Motor esquerdo mais lento
+    delay(100);
+  }
+  delay(800);
+  alinharServo();
+}
+
+void correcaoTrajetoria() {
+  double dist = medirDistancia();
+  
+  if(dist < 30) {  // Muito perto
+    if(lastCorrection <= 0) {
+      mover(90, 100);  // Ajusta para direita
+      lastCorrection = 1;
     } else {
-      // Está fazendo curva: espera 3 segundos, depois corrige a direção
-      if (millis() - curvaStartTime >= 3000) {
-        mover(100, 150); // Curva após ré
-        curvaStartTime = millis(); // Atualiza o tempo para a nova curva
-        fazendoCurva = false; // Curva concluída
-        Serial.println("Curva encerrada, andando novamente");
-      }
+      mover(100, 90);  // Ajusta para esquerda
+      lastCorrection = -1;
     }
+  } 
+  else if(dist > 50) {  // Muito longe
+    if(lastCorrection >= 0) {
+      mover(100, 90);
+      lastCorrection = -1;
+    } else {
+      mover(90, 100);
+      lastCorrection = 1;
+    }
+  } 
+  else {  // Distância ideal
+    mover(100, 100);
+    lastCorrection = 0;
+  }
+  
+  Serial.print("Correção: ");
+  Serial.println(lastCorrection);
+}
+
+// ========= LOOP PRINCIPAL =========
+void loop() {
+  // Controle por IR
+  if(IrReceiver.decode()) {
+    unsigned long codigo = IrReceiver.decodedIRData.decodedRawData;
+    
+    if(codigo == 0xE916FF00) {  // Botão ON
+      turnedOn = true;
+      Serial.println("Sistema ATIVADO");
+      mover(100, 100);
+    } 
+    else if(codigo == 0xF20DFF00) {  // Botão OFF
+      turnedOn = false;
+      Serial.println("Sistema DESATIVADO");
+      pararMotor();
+      alinharServo();
+    }
+    IrReceiver.resume();
   }
 
-  delay(50); // Pequeno delay para estabilidade
+  // Lógica de navegação
+  if(turnedOn) {
+    if(medirDistancia() < 25) {
+      decidirCurva();
+    }
+    
+    if(millis() - lastCorrectionTime > correctionInterval) {
+      correcaoTrajetoria();
+      lastCorrectionTime = millis();
+    }
+  }
+  
+  delay(100);
 }
