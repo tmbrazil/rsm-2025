@@ -14,16 +14,22 @@ const int IN2_H2 = 9;
 const int IN3_H2 = 10;  // Controle motor direito dianteiro
 const int IN4_H2 = 11;
 
-// Sensores
-const int trigPin = 46;  // Ultrassom HC-SR04
-const int echoPin = 44;
-const int IR_PIN = 19;   // Receptor IR (failsafe)
+// Sensores Ultrassônicos
+const int trigFrente = 46;  // Frontal
+const int echoFrente = 44;
+const int trigEsq = A0;     // Lateral esquerdo
+const int echoEsq = A1;
+const int trigDir = A7;     // Lateral direito
+const int echoDir = A6;
+
+// Receptor IR (controle)
+const int IR_PIN = 19;
 
 // LEDs
-const int LED_MARCO_PIN = 13;   // Sinalização de marcos
+const int LED_CONE_PIN = 22;    // Sinalização de cone detectado
 const int LED_STATUS_PIN = 22;  // Status do sistema
 
-// Servos
+// Servos para direção
 const int servoEsqPin = 12;
 const int servoDirPin = 45;
 Servo servoEsq;
@@ -33,21 +39,29 @@ Servo servoDir;
 #define SerialRPi Serial  // Conectar via USB
 
 // =================== VARIÁVEIS GLOBAIS ===================
-enum EstadoRobo {
-  AGUARDANDO_INICIO,
-  NAVEGANDO_MARCO_1,
-  NAVEGANDO_MARCO_2,
-  NAVEGANDO_MARCO_3,
-  NAVEGANDO_MARCO_4,
-  COMPLETO,
-  FALHA
+enum Estado {
+  INICIO,
+  MARCO_1,
+  MARCO_2,
+  MARCO_3,
+  MARCO_4,
+  FINAL
 };
 
-EstadoRobo estadoAtual = AGUARDANDO_INICIO;
-int marcoAtual = 1;
-unsigned long tempoInicioPartida = 0;
-const unsigned long TEMPO_MAXIMO_PARTIDA = 600000;  // 10 minutos em ms
-String comandoAtual = "STOP";
+Estado estadoAtual = INICIO;
+bool sistemaAtivo = false;
+unsigned long tempoInicioMovimento = 0;
+unsigned long tempoUltimoCone = 0;
+
+// Variáveis do cone
+int coneX = 0;
+int coneY = 0;
+bool coneDetectado = false;
+
+// Configuração dos servos
+const int SERVO_CENTRO_ESQ = 110;
+const int SERVO_CENTRO_DIR = 90;
+const int SERVO_ANGULO_MAX = 45; // Ângulo máximo de esterçamento
 
 // =================== CONFIGURAÇÃO INICIAL ===================
 void setup() {
@@ -56,11 +70,19 @@ void setup() {
   pinMode(ENB_H1, OUTPUT);
   for (int i = 4; i <= 11; i++) pinMode(i, OUTPUT);
 
-  // Sensores e LEDs
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-  pinMode(LED_MARCO_PIN, OUTPUT);
+  // Sensores
+  pinMode(trigFrente, OUTPUT);
+  pinMode(echoFrente, INPUT);
+  pinMode(trigEsq, OUTPUT);
+  pinMode(echoEsq, INPUT);
+  pinMode(trigDir, OUTPUT);
+  pinMode(echoDir, INPUT);
+  
+  // LEDs
+  pinMode(LED_CONE_PIN, OUTPUT);
   pinMode(LED_STATUS_PIN, OUTPUT);
+  
+  // IR
   IrReceiver.begin(IR_PIN);
 
   // Servos
@@ -69,45 +91,46 @@ void setup() {
   alinharServos();
 
   // Comunicação
-  Serial.begin(9600);
-  SerialRPi.begin(9600);
+  SerialRPi.begin(115200);
 
-  // Sinalização inicial
-  piscarLED(LED_STATUS_PIN, 2, 200);
-  Serial.println("Sistema Iniciado");
+  // Inicialização
+  piscarLED(LED_STATUS_PIN, 3, 200);
+  Serial.println("Sistema Pronto - Aguardando ativacao (*)");
 }
 
 // =================== LOOP PRINCIPAL ===================
 void loop() {
-  // Controle de emergência por IR
-  verificarEmergenciaIR();
-
-  // Processar comandos do Raspberry Pi
-  processarComandosRPi();
-
-  // Lógica principal de estados
-  switch (estadoAtual) {
-    case AGUARDANDO_INICIO:
-      if (comandoAtual == "INICIAR") iniciarPartida();
-      break;
-
-    case NAVEGANDO_MARCO_1:
-    case NAVEGANDO_MARCO_2:
-    case NAVEGANDO_MARCO_3:
-    case NAVEGANDO_MARCO_4:
-      executarNavegacao();
-      break;
-
-    case COMPLETO:
-      finalizarPartida();
-      break;
-
-    case FALHA:
-      tratarFalha();
-      break;
+  verificarControleIR();
+  
+  if (!sistemaAtivo) {
+    pararMotores();
+    return;
   }
 
-  delay(50);
+  processarComandosRPi();
+  verificarObstaculos();
+  
+  switch(estadoAtual) {
+    case INICIO:
+      // Aguardando ativação
+      break;
+      
+    case MARCO_2:
+      executarMarcoReto();
+      // executarMarco2();
+      break;
+      
+    case MARCO_3:
+      executarMarco3();
+      break;
+      
+    case MARCO_4:
+      executarMarco4();
+      break;
+      
+    case FINAL:
+      break;
+  }
 }
 
 // =================== FUNÇÕES DE CONTROLE ===================
@@ -131,24 +154,31 @@ void pararMotores() {
 
 // =================== FUNÇÕES DE DIREÇÃO ===================
 void alinharServos() {
-  servoEsq.write(90);
-  servoDir.write(90);
+  servoEsq.write(SERVO_CENTRO_ESQ);
+  servoDir.write(SERVO_CENTRO_DIR);
 }
 
+// void ajustarDirecao(int angulo) {
+//   // Angulo positivo = direita, negativo = esquerda
+//   angulo = constrain(angulo, SERVO_ANGULO_MAX, SERVO_ANGULO_MAX);
+  
+//   servoEsq.write(SERVO_CENTRO_ESQ + angulo);
+//   servoDir.write(SERVO_CENTRO_DIR + angulo);
+// }
+
 void girarDireita(int angulo) {
-  angulo = constrain(angulo, 0, 45);
-  servoEsq.write(90 + angulo);
-  servoDir.write(90 + angulo);
+  servoEsq.write(SERVO_CENTRO_ESQ + angulo);
+  servoDir.write(SERVO_CENTRO_DIR + angulo);
 }
 
 void girarEsquerda(int angulo) {
-  angulo = constrain(angulo, 0, 45);
-  servoEsq.write(90 - angulo);
-  servoDir.write(90 - angulo);
+  servoEsq.write(SERVO_CENTRO_ESQ - angulo);
+  servoDir.write(SERVO_CENTRO_DIR - angulo);
+
 }
 
 // =================== FUNÇÕES DE SENSORIAMENTO ===================
-float medirDistancia() {
+float medirDistancia(int trigPin, int echoPin) {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
@@ -159,39 +189,26 @@ float medirDistancia() {
   return (duracao * 0.0343) / 2;  // Distância em cm
 }
 
-void desviarObstaculo() {
-  pararMotores();
-  piscarLED(LED_STATUS_PIN, 2, 100);
+void verificarObstaculos() {
+  float distFrente = medirDistancia(trigFrente, echoFrente);
+  float distEsq = medirDistancia(trigEsq, echoEsq);
+  float distDir = medirDistancia(trigDir, echoDir);
 
-  // Verificar ambos os lados
-  girarEsquerda(30);
-  float distEsq = medirDistancia();
-  delay(100);
-  
-  girarDireita(60);
-  float distDir = medirDistancia();
-  delay(100);
-  
-  alinharServos();
-
-  // Tomar decisão
-  if (distEsq > distDir && distEsq > 40) {
-    for (int i = 0; i <= 30; i += 5) {
-      girarEsquerda(i);
-      mover(100, 70);
-      delay(100);
+  // Obstáculo frontal crítico
+  if (distFrente < 15) {
+    Serial.println("Obstaculo frontal detectado!");
+    pararMotores();
+    delay(300);
+    
+    if (distEsq > distDir) {
+      girarEsquerda(SERVO_ANGULO_MAX);
+    } else {
+      girarDireita(SERVO_ANGULO_MAX);
     }
-  } else if (distDir > 40) {
-    for (int i = 0; i <= 30; i += 5) {
-      girarDireita(i);
-      mover(70, 100);
-      delay(100);
-    }
-  } else {
-    mover(-80, -80);
-    delay(1000);
+    mover(100, 100);
+    delay(800);
+    alinharServos();
   }
-  comandoAtual = "STOP";  // Resetar comando após desvio
 }
 
 // =================== FUNÇÕES DE COMUNICAÇÃO ===================
@@ -199,57 +216,603 @@ void processarComandosRPi() {
   if (SerialRPi.available()) {
     String mensagem = SerialRPi.readStringUntil('\n');
     mensagem.trim();
-
-    // Comandos de direção
-    if (mensagem == "LEFT" || mensagem == "RIGHT" || 
-        mensagem == "FORWARD" || mensagem == "STOP") {
-      comandoAtual = mensagem;
+    
+    if(mensagem.startsWith("X") && mensagem.indexOf("Y") != -1) {
+      int posY = mensagem.indexOf("Y");
+      coneX = mensagem.substring(1, posY).toInt();
+      coneY = mensagem.substring(posY+1).toInt();
+      
+      coneDetectado = true;
+      tempoUltimoCone = millis();
+      
+      Serial.print("Cone X:");
+      Serial.print(coneX);
+      Serial.print(" Y:");
+      Serial.println(coneY);
     }
-    // Detecção de marcos
-    else if (mensagem.startsWith("MARCO_")) {
-      int novoMarco = mensagem.substring(6).toInt();
-      if (novoMarco == marcoAtual + 1) {
-        marcoAtual = novoMarco;
-        sinalizarMarco();
-        if (marcoAtual == 4) estadoAtual = COMPLETO;
+  }
+  
+  if (coneDetectado && millis() - tempoUltimoCone > 1000) {
+    coneDetectado = false;
+  }
+}
+
+// =================== LÓGICA DOS MARCOS ===================
+void executarMarcoReto() {
+  static uint8_t etapa = 0;
+  static unsigned long tempoInicio = 0;
+
+  switch (etapa) {
+    case 0:
+      Serial.println("Marco 2: Iniciando corrida reta inicial...");
+      mover(235, 255);
+      tempoInicio = millis();
+      etapa = 1;
+      break;
+
+    case 1:
+    if ((millis() - tempoInicio >= 25000) && sistemaAtivo) {
+      girarEsquerda(30);
+      tempoInicio = millis();
+      etapa = 2;
+    }
+      break;
+    case 2:
+    if ((millis() - tempoInicio >= 100) && sistemaAtivo) {
+      mover(100, 100);
+      tempoInicio = millis();
+      etapa = 3;
+    }
+      break;
+    case 3:
+    if ((millis() - tempoInicio >= 800) && sistemaAtivo) {
+      alinharServos();
+      tempoInicio = millis();
+      etapa = 4;
+    }
+      break;
+
+    case 4:
+    if ((millis() - tempoInicio >= 500) && sistemaAtivo) {
+      mover(235, 255);
+      tempoInicio = millis();
+      etapa = 5;
+    }
+    break;
+    case 5:
+      if (((millis() - tempoInicio >= 10000) && (medirDistancia(46, 44)) < 20) && sistemaAtivo) {
+        pararMotores();
+        piscarLED(22, 4, 500);
+        estadoAtual = MARCO_3;
       }
+      break;
+  }
+}
+void executarMarco2() {
+  static uint8_t etapa = 0;
+  static unsigned long tempoInicio = 0;
+
+  switch (etapa) {
+    case 0:
+      verificarControleIR();
+      delay(100);
+
+      Serial.println("Marco 2: Iniciando corrida reta inicial...");
+      mover(255, 255);
+      tempoInicio = millis();
+      etapa = 1;
+      break;
+
+    case 1:
+      verificarControleIR();
+      delay(100);
+
+      if ((millis() - tempoInicio >= 8000) && sistemaAtivo) {
+        pararMotores();
+        tempoInicio = millis();
+        etapa = 2;
+      }
+      break;
+
+    case 2:
+      verificarControleIR();
+      delay(100);
+
+      if ((millis() - tempoInicio >= 1000) && sistemaAtivo) {
+        girarDireita(30);
+        tempoInicio = millis();
+        etapa = 3;
+      }
+      break;
+
+    case 3:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 800) {
+        mover(100, 100);
+        tempoInicio = millis();
+        etapa = 4;
+      }
+      break;
+
+    case 4:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 1500) {
+        pararMotores();
+        tempoInicio = millis();
+        etapa = 5;
+      }
+      break;
+
+    case 5:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 500) {
+        alinharServos();
+        tempoInicio = millis();
+        etapa = 6;
+      }
+      break;
+
+    case 6:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 400) {
+        mover(255, 255);
+        tempoInicio = millis();
+        etapa = 7;
+      }
+      break;
+
+    case 7:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 12000) {
+        girarEsquerda(20);
+        tempoInicio = millis();
+        etapa = 8;
+      }
+      break;
+
+    case 8:
+      if (millis() - tempoInicio >= 1000) {
+        mover(100, 100);
+        tempoInicio = millis();
+        etapa = 9;
+      }
+      break;
+
+    case 9:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 150) {
+        alinharServos();
+        mover(255, 255);
+        tempoInicio = millis();
+        etapa = 10;
+      }
+      break;
+
+    case 10:
+      verificarControleIR();
+      delay(100);
+      
+      if ((millis() - tempoInicio) >= 25000 || medirDistancia(46, 44) <= 20) {
+        pararMotores();
+        piscarLED(22, 4, 500);
+        estadoAtual = MARCO_3;
+        etapa = 0;  // Reinicia etapas para o próximo marco
+      }
+      break;
+  }
+}
+
+  // if (medirDistancia(46, 44) < 15) {
+  //   pararMotores();
+  //   piscarLED(22, 3, 500);
+  //   coneDetectado = true;
+  //   delay(2000);
+  // }
+
+  // if (coneDetectado) {
+  //   pararMotores();
+  //   delay(500);
+  //   girarEsquerda(45);
+  //   delay(500);
+  //   mover(-100,-100);
+  //   delay(3000);
+  //   girarDireita(45);
+  //   delay(500);
+  //   alinharServos();
+  //   delay(500);
+  //   mover(255,255);
+  //   delay(10000);
+
+  //   pararMotores();
+  //   delay(5000);
+  // }
+  // static uint8_t etapa = 0;
+  // static unsigned long tempoInicio = 0;
+
+  // switch (etapa) {
+  //   case 0:
+  //     Serial.println("Marco 2 - Etapa 0: Procurando cone...");
+  //     tempoInicio = millis();
+  //     etapa = 1;
+  //     break;
+
+  //   case 1:
+  //     if (coneDetectado) {
+  //       Serial.println("Cone detectado! Indo para alinhamento.");
+  //       etapa = 2;
+  //     } else if (millis() - tempoInicio > 10000) { // Timeout de 10s
+  //       Serial.println("Timeout: cone não detectado.");
+  //       pararMotores();
+  //       estadoAtual = INICIO; // ou outro estado de erro
+  //       etapa = 0;
+  //     } else {
+  //       mover(100, 100); // Anda pra frente procurando cone
+  //     }
+  //     break;
+
+  //   case 2:
+  //     // Alinhar com o cone baseado no X
+  //     if (abs(coneX) > 30) { // margem de tolerância
+  //       Serial.print("Alinhando com cone, coneX: ");
+  //       Serial.println(coneX);
+  //       if (coneX < 0) {
+  //         girarEsquerdaLeve();
+  //       } else {
+  //         girarDireitaLeve();
+  //       }
+  //     } else {
+  //       Serial.println("Alinhamento feito.");
+  //       etapa = 3;
+  //       tempoInicio = millis();
+  //     }
+  //     break;
+
+  //   case 3:
+  //     // Aproximação até o cone
+  //     float distancia = medirDistancia(trigFrente, echoFrente);
+  //     Serial.print("Distância ao cone: ");
+  //     Serial.println(distancia);
+
+  //     if (distancia < 30.0) {
+  //       Serial.println("Cone próximo! Parando.");
+  //       pararMotores();
+  //       etapa = 4;
+  //       tempoInicio = millis();
+  //     } else {
+  //       mover(60, 60); // Aproxima devagar
+  //     }
+  //     break;
+
+  //   case 4:
+  //     // Espera um pouco para garantir parada
+  //     if (millis() - tempoInicio > 1000) {
+  //       Serial.println("Marco 2 concluído.");
+  //      pararMotores();
+  //      delay(10000);
+  //       etapa = 0;
+  //     }
+  //     break;
+  // }
+
+
+  
+  // if (!giroCompleto) {
+  //   // Gira 165° para a direita usando servos
+  //   girarDireita(SERVO_ANGULO_MAX);
+  //   mover(100, 100);
+  //   delay(1650); // Ajuste este tempo para giro preciso
+  //   giroCompleto = true;
+  //   alinharServos();
+  //   tempoInicioMovimento = millis();
+  // }
+
+  // // Alinhar com o cone
+  // if (coneDetectado) {
+  //   if (abs(coneX) > 30) {
+  //     // Ainda não está alinhado → gira para alinhar
+  //     if (coneX < 0) {
+  //       // Cone à esquerda → girar levemente à esquerda
+  //       girarEsquerdaLeve();
+  //     } else {
+  //       // Cone à direita → girar levemente à direita
+  //       girarDireitaLeve();
+  //     }
+  //   } else if (coneY < 20) {
+  //     // Alinhado e próximo → muda de marco
+  //     piscarLED(LED_CONE_PIN, 3, 200);
+  //     estadoAtual = MARCO_2;
+  //     giroCompleto = false;
+  //   } else {
+  //     // Alinhado mas ainda distante → avança para o cone
+  //     mover(120, 120);
+  //   }
+  // } else if (millis() - tempoInicioMovimento > 15000) {
+  //   // Timeout de busca
+  //   estadoAtual = INICIO;
+  //   giroCompleto = false;
+  // }
+
+
+void executarMarco3() {
+  static uint8_t etapa = 0;
+  static unsigned long tempoInicio = 0;
+  static unsigned long tempoEspera = 0;
+  static bool obstaculoDetectado = false;
+
+  switch (etapa) {
+    case 0:
+      girarEsquerda(45);
+      tempoInicio = millis();
+      etapa = 1;
+      break;
+
+    case 1:
+      if (millis() - tempoInicio >= 100) {
+        mover(-200, -200);
+        tempoInicio = millis();
+        etapa = 2;
+      }
+      break;
+
+    case 2:
+      if (millis() - tempoInicio >= 2000) {
+        pararMotores();
+        tempoInicio = millis();
+        etapa = 3;
+      }
+      break;
+
+    case 3:
+      if (millis() - tempoInicio >= 100) {
+        girarDireita(45);
+        tempoInicio = millis();
+        etapa = 4;
+      }
+      break;
+
+    case 4:
+      if (millis() - tempoInicio >= 2000) {
+        mover(200, 200);
+        tempoInicio = millis();
+        etapa = 5;
+      }
+      break;
+
+    case 5:
+      if (millis() - tempoInicio >= 500) {
+        alinharServos();
+        tempoInicio = millis();
+        etapa = 6;
+      } break;
+
+    case 6:
+      if (millis() - tempoInicio >= 200) {
+        mover(255, 255);
+        tempoInicio = millis();
+        etapa = 7;
+      }
+      break;
+
+    case 7:
+      verificarControleIR();
+      delay(100);
+
+      if ((millis() - tempoInicio >= 25000) && sistemaAtivo) {
+        girarDireita(20);
+        tempoInicio = millis();
+        etapa = 8;
+      }
+      break;
+
+    case 8:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 1000) {
+        mover(100, 100);
+        tempoInicio = millis();
+        etapa = 9;
+      } break;
+
+    case 9:
+    verificarControleIR();
+      delay(100);
+
+      if ((millis() - tempoInicio >= 500) && sistemaAtivo) {
+        alinharServos();
+        tempoInicio = millis();
+        etapa = 10;
+      }
+      break;
+
+    case 10:
+      verificarControleIR();
+      delay(100);
+
+      if ((millis() - tempoInicio >= 500) && sistemaAtivo) {
+        mover(255, 255);
+        tempoInicio = millis();
+        etapa = 11;
+      }
+      break;
+
+    case 11:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 12000) {
+        girarEsquerda(20);
+        tempoInicio = millis();
+        etapa = 12;
+      } break;
+
+    case 12:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 500) {
+        alinharServos();
+        tempoInicio = millis();
+        etapa = 13;
+      }
+      break;
+
+      case 13:
+      verificarControleIR();
+      delay(100);
+
+      if (millis() - tempoInicio >= 500) {
+        mover(255, 255);
+        tempoInicio = millis();
+        etapa = 14;
+      }
+      break;
+
+    case 14:
+      verificarControleIR();
+      delay(100);
+      
+      if ((millis() - tempoInicio) >= 10000 || medirDistancia(46, 44) <= 15) {
+        pararMotores();
+        piscarLED(22, 4, 500);
+        estadoAtual = MARCO_4;
+        etapa = 0;  // Reinicia etapas para o próximo marco
+      }
+      break;
+  }
+}
+
+void executarMarco4() {
+  static uint8_t etapa = 0;
+  static unsigned long tempoInicio = 0;
+
+  switch (etapa) {
+    case 0:
+      girarEsquerda(20);
+      mover(200, 200);
+      tempoInicio = millis();
+      etapa = 1;
+      break;
+
+    case 1:
+      if (millis() - tempoInicio >= 4000) {
+        alinharServos();
+        tempoInicio = millis();
+        etapa = 2;
+      }
+      break;
+
+    case 2:
+      if (millis() - tempoInicio >= 100) {
+        mover(150, 150);
+        tempoInicio = millis();
+        etapa = 3;
+      }
+      break;
+
+    case 3:
+      if ((millis() - tempoInicio < 7000) && medirDistancia(46, 44) > 15) {
+        // continua se não encontrou obstáculo
+        break;
+      } else {
+        pararMotores();
+        tempoInicio = millis();
+        etapa = 4;
+      }
+      break;
+
+    case 4:
+      if (millis() - tempoInicio >= 500) {
+        piscarLED(22, 4, 500);
+        pararMotores();
+        etapa = 0; // reinicia para permitir nova execução
+        estadoAtual = FINAL; // se existir um marco seguinte
+      }
+      break;
+  }
+}
+
+
+// void executarMarco4() {
+//   // Navegação final
+//   if (coneDetectado) {
+//     if (coneY < 20 && abs(coneX) < 30) {
+//       piscarLED(LED_CONE_PIN, 5, 200);
+//       estadoAtual = FINAL;
+//     } else {
+//       navegarParaCone();
+//     }
+//   } else {
+//     buscarCones();
+//   }
+// }
+
+// =================== FUNÇÕES DE NAVEGAÇÃO ===================
+void navegarParaCone() {
+  if (!coneDetectado) {
+    buscarCones();
+    return;
+  }
+
+  // Controle proporcional para direção
+  int anguloDirecao = map(coneX, 320, 320, SERVO_ANGULO_MAX, SERVO_ANGULO_MAX);
+  // ajustarDirecao(anguloDirecao);
+  
+  // Velocidade base reduzida quando perto do cone
+  int velocidade = constrain(coneY, 50, 150);
+  mover(velocidade, velocidade);
+}
+
+void buscarCones() {
+  static unsigned long ultimaBusca = 0;
+  static bool direita = true;
+  
+  if (millis() - ultimaBusca > 2000) {
+    if (direita) {
+      girarDireita(SERVO_ANGULO_MAX);
+    } else {
+      girarEsquerda(SERVO_ANGULO_MAX);
     }
+    direita = !direita;
+    ultimaBusca = millis();
   }
+  
+  mover(80, 80);
 }
 
-// =================== FUNÇÕES DE ESTADOS ===================
-void iniciarPartida() {
-  estadoAtual = NAVEGANDO_MARCO_1;
-  tempoInicioPartida = millis();
-  Serial.println("Partida Iniciada!");
-}
-
-void finalizarPartida() {
-  pararMotores();
-  digitalWrite(LED_MARCO_PIN, HIGH);
-  Serial.println("Desafio Completo!");
-}
-
-void tratarFalha() {
-  while (true) {
-    piscarLED(LED_MARCO_PIN, 5, 100);
-    delay(100);
-  }
-}
-
-// =================== FUNÇÕES AUXILIARES ===================
-void verificarEmergenciaIR() {
+// =================== CONTROLE POR IR ===================
+void verificarControleIR() {
   if (IrReceiver.decode()) {
-    if (IrReceiver.decodedIRData.decodedRawData == 0xF20DFF00) {
-      estadoAtual = FALHA;
+    if (IrReceiver.decodedIRData.decodedRawData == 0xE916FF00) { // *
+      sistemaAtivo = true;
+      estadoAtual = MARCO_2;
+      piscarLED(LED_STATUS_PIN, 1, 500);
+      Serial.println("Sistema ATIVADO - Iniciando Marco 1");
+    }
+    else if (IrReceiver.decodedIRData.decodedRawData == 0xF20DFF00) { // #
+      sistemaAtivo = false;
+      estadoAtual = INICIO;
       pararMotores();
-      Serial.println("Parada de Emergência!");
-      while (true) piscarLED(LED_STATUS_PIN, 2, 200);
+      piscarLED(LED_STATUS_PIN, 2, 200);
+      Serial.println("Sistema DESATIVADO");
     }
     IrReceiver.resume();
   }
 }
 
+// =================== FUNÇÕES AUXILIARES ===================
 void piscarLED(int pin, int vezes, int intervalo) {
   for (int i = 0; i < vezes; i++) {
     digitalWrite(pin, HIGH);
@@ -259,44 +822,18 @@ void piscarLED(int pin, int vezes, int intervalo) {
   }
 }
 
-void sinalizarMarco() {
-  piscarLED(LED_MARCO_PIN, 3, 200);
-  digitalWrite(LED_MARCO_PIN, HIGH);
-  delay(1000);
-  digitalWrite(LED_MARCO_PIN, LOW);
-  Serial.print("Marco ");
-  Serial.print(marcoAtual);
-  Serial.println(" Detectado!");
+void girarDireitaLeve() {
+  girarDireita(10);  // vira o servo para 20 graus à direita
+  mover(80, 80);   // anda para frente com ambos os motores
+  delay(300);        // gira por um tempo curto
+  pararMotores();    // para os motores
+  alinharServos();   // volta os servos para a posição reta
 }
 
-// =================== LÓGICA DE NAVEGAÇÃO ===================
-void executarNavegacao() {
-  // Verificação prioritária de obstáculos
-  if (medirDistancia() < 25) {
-    desviarObstaculo();
-    return;
-  }
-
-  // Executar comando atual
-  if (comandoAtual == "LEFT") {
-    girarEsquerda(30);
-    mover(80, 100);
-  } 
-  else if (comandoAtual == "RIGHT") {
-    girarDireita(30);
-    mover(100, 80);
-  } 
-  else if (comandoAtual == "FORWARD") {
-    alinharServos();
-    mover(100, 100);
-  }
-  else {
-    pararMotores();
-  }
-
-  // Verificar timeout
-  if (millis() - tempoInicioPartida > TEMPO_MAXIMO_PARTIDA) {
-    estadoAtual = FALHA;
-    Serial.println("Tempo Excedido!");
-  }
+void girarEsquerdaLeve() {
+  girarEsquerda(10); // vira o servo para 20 graus à esquerda
+  mover(80, 80);   // anda para frente
+  delay(300);        // gira por um tempo curto
+  pararMotores();    // para
+  alinharServos();   // centraliza o servo novamente
 }
